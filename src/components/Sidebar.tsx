@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
-type ViewMode = 'perspective' | 'oblique' | 'top';
+type ViewMode = 'perspective' | 'oblique' | 'top' | 'free';
 
 interface SidebarProps {
     floodLevel: number;
@@ -24,6 +24,8 @@ interface SidebarProps {
     toggleBuildings: () => void;
     viewMode?: ViewMode;
     setViewMode?: (mode: ViewMode) => void;
+    interactionMode?: 'view' | 'block';
+    setInteractionDetails?: (mode: 'view' | 'block') => void;
 }
 
 export default function Sidebar({
@@ -34,6 +36,7 @@ export default function Sidebar({
     showEvacRoutes, toggleEvacRoutes,
     showBuildings, toggleBuildings,
     viewMode = 'perspective', setViewMode,
+    interactionMode = 'view', setInteractionDetails,
 }: SidebarProps) {
     const [isOpen, setIsOpen] = useState(true);
 
@@ -44,16 +47,17 @@ export default function Sidebar({
 
     return (
         <>
-            <button onClick={() => setIsOpen(!isOpen)} className="sidebar-toggle">
+            <button onClick={() => setIsOpen(!isOpen)} className="sidebar-toggle" style={{ pointerEvents: 'auto' }}>
                 {isOpen ? <X size={24} /> : <Menu size={24} />}
             </button>
 
-            <div className={`sidebar ${isOpen ? 'open' : ''}`}>
+            <div className={`sidebar ${isOpen ? 'open' : ''}`} style={{ pointerEvents: 'auto' }}>
                 <div className="sidebar-content">
 
+                    {/* Brand */}
                     <div>
                         <h1 className="brand-title">FloodRisk AI</h1>
-                        <p className="brand-subtitle">3D Flood Simulation</p>
+                        <p className="brand-subtitle">3D Flood Simulation Platform</p>
                     </div>
 
                     {onBackToAOI && (
@@ -63,50 +67,48 @@ export default function Sidebar({
                         </button>
                     )}
 
-                    {/* Mesh Toggle */}
-                    <button onClick={toggleMesh}
-                        className={`btn list-btn ${showMesh ? 'active' : ''}`}
-                        style={{ justifyContent: 'center', gap: '0.5rem' }}>
-                        <Grid3x3 size={16} />
-                        {showMesh ? '3D Mesh: ON' : 'Show 3D Mesh'}
-                        {showMesh && <div className="pulse-dot" style={{ width: 6, height: 6 }} />}
-                    </button>
+                    <div className="section-divider" />
 
-                    {/* Buildings Toggle */}
-                    <button onClick={toggleBuildings}
-                        className={`btn list-btn ${showBuildings ? 'active' : ''}`}
-                        style={{ justifyContent: 'center', gap: '0.5rem' }}>
-                        <Building2 size={16} />
-                        {showBuildings ? 'Buildings: ON' : 'Show Buildings'}
-                        {showBuildings && <div className="pulse-dot" style={{ width: 6, height: 6 }} />}
-                    </button>
+                    {/* Layer Toggles */}
+                    <div>
+                        <div className="section-title">Layers</div>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <div className="toggle-row" onClick={toggleMesh}>
+                                <span className="toggle-row-label">
+                                    <Grid3x3 size={16} /> 3D Mesh
+                                </span>
+                                <div className={`toggle-switch ${showMesh ? 'active' : ''}`} />
+                            </div>
+                            <div className="toggle-row" onClick={toggleBuildings}>
+                                <span className="toggle-row-label">
+                                    <Building2 size={16} /> Buildings
+                                </span>
+                                <div className={`toggle-switch ${showBuildings ? 'active' : ''}`} />
+                            </div>
+                            <div className="toggle-row" onClick={toggleEvacRoutes}>
+                                <span className="toggle-row-label">
+                                    <Navigation size={16} /> Evac Routes
+                                </span>
+                                <div className={`toggle-switch ${showEvacRoutes ? 'active-green' : ''}`} />
+                            </div>
+                        </div>
+                    </div>
 
-                    {/* Evacuation Routes Toggle */}
-                    <button onClick={toggleEvacRoutes}
-                        className={`btn list-btn ${showEvacRoutes ? 'active' : ''}`}
-                        style={{ justifyContent: 'center', gap: '0.5rem', border: showEvacRoutes ? '1px solid rgba(0,255,68,0.4)' : undefined }}>
-                        <Navigation size={16} />
-                        {showEvacRoutes ? 'Evac Routes: ON' : 'Show Evac Routes'}
-                        {showEvacRoutes && <div className="pulse-dot" style={{ width: 6, height: 6, background: '#00ff44' }} />}
-                    </button>
+                    <div className="section-divider" />
 
-                    {/* Camera View */}
+                    {/* Camera View — Segmented Control */}
                     {setViewMode && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                            <div style={{ fontSize: '0.6rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <div>
+                            <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                 <Eye size={12} /> Camera View
                             </div>
-                            <div style={{ display: 'flex', gap: '0.3rem' }}>
-                                {([['perspective', '3D'], ['oblique', 'Oblique'], ['top', 'Top']] as [ViewMode, string][]).map(([mode, label]) => (
-                                    <button key={mode} onClick={() => setViewMode(mode)}
-                                        className="btn list-btn"
-                                        style={{
-                                            flex: 1, justifyContent: 'center', padding: '0.4rem 0.2rem',
-                                            fontSize: '0.68rem', fontWeight: viewMode === mode ? 700 : 400,
-                                            background: viewMode === mode ? 'rgba(56,189,248,0.2)' : undefined,
-                                            border: viewMode === mode ? '1px solid rgba(56,189,248,0.5)' : undefined,
-                                            color: viewMode === mode ? '#38bdf8' : undefined,
-                                        }}>
+                            <div className="seg-control">
+                                {([['perspective', '3D'], ['oblique', 'Oblique'], ['top', 'Top'], ['free', 'Free']] as [ViewMode, string][]).map(([mode, label]) => (
+                                    <button
+                                        key={mode}
+                                        onClick={() => setViewMode(mode)}
+                                        className={`seg-option ${viewMode === mode ? 'active' : ''}`}
+                                    >
                                         {label}
                                     </button>
                                 ))}
@@ -114,7 +116,9 @@ export default function Sidebar({
                         </div>
                     )}
 
-                    {/* Water Level */}
+                    <div className="section-divider" />
+
+                    {/* Flood Simulation Controls */}
                     <div className="control-group">
                         <h2 className="section-title">
                             <Droplets size={14} style={{ display: 'inline', marginRight: 4 }} />
@@ -136,6 +140,22 @@ export default function Sidebar({
                             </div>
                         </div>
 
+                        <div style={{ marginBottom: '0.75rem' }}>
+                            <button
+                                onClick={() => setInteractionDetails?.(interactionMode === 'block' ? 'view' : 'block')}
+                                className={`btn ${interactionMode === 'block' ? 'btn-danger' : 'btn-secondary'}`}
+                                style={{ width: '100%', justifyContent: 'center', gap: '0.5rem', border: interactionMode === 'block' ? '1px solid #ef4444' : '1px solid #334155' }}
+                            >
+                                <AlertTriangle size={16} />
+                                {interactionMode === 'block' ? 'Active: Click to Block Roads' : 'Stress Test: Block Roads'}
+                            </button>
+                            {interactionMode === 'block' && (
+                                <div style={{ fontSize: '0.65rem', color: '#fca5a5', marginTop: '0.25rem', textAlign: 'center' }}>
+                                    Click anywhere on terrain to place a barrier
+                                </div>
+                            )}
+                        </div>
+
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                             <button onClick={toggleSimulation}
                                 className={`btn ${simulationRunning ? 'btn-danger-soft' : 'btn-success-soft'}`}
@@ -150,7 +170,9 @@ export default function Sidebar({
                         </div>
                     </div>
 
-                    {/* Status */}
+                    <div className="section-divider" />
+
+                    {/* Risk Status Card */}
                     <div className="stats-card">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                             <h3 style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', color: riskColor }}>
@@ -159,7 +181,7 @@ export default function Sidebar({
                             {simulationRunning && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                     <div className="pulse-dot" />
-                                    <span style={{ fontSize: '0.6rem', color: '#34d399' }}>LIVE</span>
+                                    <span style={{ fontSize: '0.6rem', color: '#34d399', fontWeight: 600, letterSpacing: '0.08em' }}>LIVE</span>
                                 </div>
                             )}
                         </div>
@@ -190,7 +212,7 @@ export default function Sidebar({
                             How it works
                         </p>
                         <p style={{ fontSize: '0.68rem', color: '#94a3b8', lineHeight: 1.5 }}>
-                            Water spreads outward from the 💧 source you placed. Zones expand as the water level rises:
+                            Water spreads outward from the source you placed. Zones expand as the water level rises:
                         </p>
                         <div style={{ fontSize: '0.68rem', marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                             <span style={{ color: '#fca5a5' }}>🔴 Red = Critical (near water body)</span>
@@ -199,6 +221,10 @@ export default function Sidebar({
                         </div>
                     </div>
 
+                    {/* Footer */}
+                    <div style={{ fontSize: '0.55rem', color: '#475569', textAlign: 'center', paddingTop: '0.5rem' }}>
+                        FloodRisk AI v1.0 · Real-time 3D GIS
+                    </div>
                 </div>
             </div>
         </>

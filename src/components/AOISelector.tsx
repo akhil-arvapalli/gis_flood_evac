@@ -1,13 +1,45 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { MapPin, Pentagon, Trash2, ArrowRight, Search, Waves } from 'lucide-react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { MapPin, Pentagon, Trash2, ArrowRight, Search, Waves, CheckCircle2, MapPinned, Building2, Mountain, TreePine } from 'lucide-react';
+
+interface NominatimSuggestion {
+    place_id: number;
+    display_name: string;
+    lat: string;
+    lon: string;
+    type: string;
+    class: string;
+    addresstype?: string;
+}
 
 interface AOISelectorProps {
-    onAOISelected: (coordinates: number[][], waterSource: number[]) => void;
+    onAOISelected: (coordinates: number[][], waterSources: number[][]) => void;
 }
 
 type DrawStep = 'idle' | 'drawing-polygon' | 'placing-source' | 'ready';
+
+function StepIndicator({ step }: { step: DrawStep }) {
+    const steps = [
+        { num: 1, label: 'Draw AOI' },
+        { num: 2, label: 'Water Sources' },
+        { num: 3, label: 'Launch 3D' },
+    ];
+    const active = step === 'idle' ? 0 : step === 'drawing-polygon' ? 1 : step === 'placing-source' ? 2 : 3;
+
+    return (
+        <div className="step-indicator">
+            {steps.map((s, i) => (
+                <div key={s.num} style={{ display: 'flex', alignItems: 'center' }}>
+                    {i > 0 && <div className={`step-line ${active > i ? 'completed' : ''}`} />}
+                    <div className={`step-dot ${active === s.num ? 'active' : active > s.num ? 'completed' : ''}`}>
+                        {active > s.num ? <CheckCircle2 size={14} /> : s.num}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
 
 export default function AOISelector({ onAOISelected }: AOISelectorProps) {
     const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -15,18 +47,117 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
     const polygonLayerRef = useRef<any>(null);
     const [step, setStep] = useState<DrawStep>('idle');
     const [polygon, setPolygon] = useState<number[][]>([]);
-    const [waterSource, setWaterSource] = useState<number[] | null>(null);
+    const [waterSources, setWaterSources] = useState<number[][]>([]);
     const [searchQuery, setSearchQuery] = useState('');
+    const [suggestions, setSuggestions] = useState<NominatimSuggestion[]>([]);
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const [activeSuggIdx, setActiveSuggIdx] = useState(-1);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const searchContainerRef = useRef<HTMLDivElement>(null);
 
     // Refs to hold stable handler references and mutable polygon data
     const polygonRef = useRef<number[][]>([]);
     const polygonHandlerRef = useRef<((e: any) => void) | null>(null);
     const sourceHandlerRef = useRef<((e: any) => void) | null>(null);
 
+    // Close suggestions on outside click
     useEffect(() => {
-        if (!mapContainerRef.current || mapRef.current) return;
+        const handler = (e: MouseEvent) => {
+            if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+                setShowSuggestions(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    // Debounced autocomplete fetch
+    const fetchSuggestions = useCallback((query: string) => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        if (query.trim().length < 2) { setSuggestions([]); setShowSuggestions(false); return; }
+        setSearchLoading(true);
+        debounceRef.current = setTimeout(async () => {
+            try {
+                const res = await fetch(
+                    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=6&addressdetails=1`
+                );
+                const data: NominatimSuggestion[] = await res.json();
+                setSuggestions(data);
+                setShowSuggestions(data.length > 0);
+                setActiveSuggIdx(-1);
+            } catch { setSuggestions([]); }
+            setSearchLoading(false);
+        }, 300);
+    }, []);
+
+    const handleSearchInput = (val: string) => {
+        setSearchQuery(val);
+        fetchSuggestions(val);
+    };
+
+    const selectSuggestion = (s: NominatimSuggestion) => {
+        setSearchQuery(s.display_name.split(',').slice(0, 2).join(','));
+        setSuggestions([]);
+        setShowSuggestions(false);
+        if (mapRef.current) {
+            mapRef.current.setView([parseFloat(s.lat), parseFloat(s.lon)], 14);
+        }
+    };
+
+    const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+        if (!showSuggestions || suggestions.length === 0) {
+            if (e.key === 'Enter') {
+                // Fallback: direct search
+                if (searchQuery.trim() && mapRef.current) {
+                    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`)
+                        .then(r => r.json())
+                        .then(d => { if (d?.[0]) mapRef.current.setView([parseFloat(d[0].lat), parseFloat(d[0].lon)], 14); });
+                }
+            }
+            return;
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActiveSuggIdx(i => Math.min(i + 1, suggestions.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActiveSuggIdx(i => Math.max(i - 1, 0));
+        } else if (e.key === 'Enter' && activeSuggIdx >= 0) {
+            e.preventDefault();
+            selectSuggestion(suggestions[activeSuggIdx]);
+        } else if (e.key === 'Escape') {
+            setShowSuggestions(false);
+        }
+    };
+
+    const getSuggestionIcon = (s: NominatimSuggestion) => {
+        const c = s.class;
+        if (c === 'place' || c === 'boundary') return <MapPinned size={14} />;
+        if (c === 'building' || c === 'amenity') return <Building2 size={14} />;
+        if (c === 'natural') return s.type === 'peak' ? <Mountain size={14} /> : <TreePine size={14} />;
+        if (c === 'waterway' || c === 'water') return <Waves size={14} />;
+        return <MapPin size={14} />;
+    };
+
+    const formatSuggestion = (s: NominatimSuggestion) => {
+        const parts = s.display_name.split(',');
+        const main = parts.slice(0, 2).join(',').trim();
+        const secondary = parts.slice(2, 4).join(',').trim();
+        return { main, secondary };
+    };
+
+    useEffect(() => {
+        if (!mapContainerRef.current) return;
+        let cancelled = false;
 
         import('leaflet').then((L) => {
+            if (cancelled || !mapContainerRef.current) return;
+            if (mapRef.current) {
+                mapRef.current.remove();
+                mapRef.current = null;
+            }
+
             delete (L.Icon.Default.prototype as any)._getIconUrl;
             L.Icon.Default.mergeOptions({
                 iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -44,8 +175,8 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
         });
 
         return () => {
+            cancelled = true;
             if (mapRef.current) {
-                // Clean up all handlers before destroying the map
                 if (polygonHandlerRef.current) mapRef.current.off('click', polygonHandlerRef.current);
                 if (sourceHandlerRef.current) mapRef.current.off('click', sourceHandlerRef.current);
                 mapRef.current.remove();
@@ -54,18 +185,9 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
         };
     }, []);
 
-    const searchLocation = async () => {
-        if (!searchQuery.trim() || !mapRef.current) return;
-        try {
-            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`);
-            const data = await res.json();
-            if (data?.[0]) mapRef.current.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 14);
-        } catch (err) { console.error('Search failed:', err); }
-    };
-
     const clearLayers = () => { if (polygonLayerRef.current) polygonLayerRef.current.clearLayers(); };
 
-    const drawOnMap = (points: number[][], source: number[] | null) => {
+    const drawOnMap = (points: number[][], sources: number[][]) => {
         import('leaflet').then((L) => {
             clearLayers();
             if (!polygonLayerRef.current) return;
@@ -90,9 +212,8 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
                 }).addTo(polygonLayerRef.current);
             }
 
-            // Draw water source
-            if (source) {
-                // Draw danger rings from the water source
+            // Draw water sources
+            sources.forEach((source, idx) => {
                 [0.008, 0.005, 0.002].forEach((r, i) => {
                     const colors = ['rgba(34,197,94,0.15)', 'rgba(250,204,21,0.2)', 'rgba(239,68,68,0.25)'];
                     const borders = ['#22c55e', '#facc15', '#ef4444'];
@@ -106,17 +227,19 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
                     radius: 10, fillColor: '#3b82f6', color: '#fff', weight: 3, fillOpacity: 1
                 }).addTo(polygonLayerRef.current);
 
-                L.marker([source[1], source[0]], {
-                    icon: L.divIcon({
-                        html: '<div style="background:#1e40af;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;white-space:nowrap;border:2px solid #60a5fa;">💧 Water Source</div>',
-                        className: '', iconAnchor: [40, 40]
-                    })
-                }).addTo(polygonLayerRef.current);
-            }
+                // Index label
+                if (sources.length > 1) {
+                    L.marker([source[1], source[0]], {
+                        icon: L.divIcon({
+                            html: `<div style="color:white;font-weight:bold;font-size:12px;text-align:center;margin-top:-6px;font-family:sans-serif;">${idx + 1}</div>`,
+                            className: '', iconAnchor: [6, 9]
+                        })
+                    }).addTo(polygonLayerRef.current);
+                }
+            });
         });
     };
 
-    // Remove any active map click handlers safely
     const removeAllHandlers = () => {
         if (mapRef.current) {
             if (polygonHandlerRef.current) {
@@ -130,11 +253,10 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
         }
     };
 
-    // Step 1: Start drawing polygon
     const startDrawing = () => {
         setStep('drawing-polygon');
         setPolygon([]);
-        setWaterSource(null);
+        setWaterSources([]);
         polygonRef.current = [];
         clearLayers();
         removeAllHandlers();
@@ -145,52 +267,46 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
                 const updated = [...polygonRef.current, [lng, lat]];
                 polygonRef.current = updated;
                 setPolygon(updated);
-                drawOnMap(updated, null);
+                drawOnMap(updated, []);
             };
             polygonHandlerRef.current = handler;
             mapRef.current.on('click', handler);
         }
     };
 
-    // Step 2: Finish polygon, start placing water source
     const finishPolygon = () => {
         if (polygonRef.current.length < 3) return;
         setStep('placing-source');
         if (mapRef.current) {
-            // Remove polygon click handler using the stored ref
             if (polygonHandlerRef.current) {
                 mapRef.current.off('click', polygonHandlerRef.current);
                 polygonHandlerRef.current = null;
             }
             mapRef.current.getContainer().style.cursor = 'pointer';
+
+            // Allow multiple sources
             const handler = (e: any) => {
                 const { lat, lng } = e.latlng;
                 const src = [lng, lat];
-                setWaterSource(src);
-                drawOnMap(polygonRef.current, src);
-                setStep('ready');
-                if (mapRef.current) {
-                    mapRef.current.getContainer().style.cursor = '';
-                    if (sourceHandlerRef.current) {
-                        mapRef.current.off('click', sourceHandlerRef.current);
-                        sourceHandlerRef.current = null;
-                    }
-                }
+                setWaterSources(prev => {
+                    const next = [...prev, src];
+                    drawOnMap(polygonRef.current, next);
+                    return next;
+                });
             };
             sourceHandlerRef.current = handler;
             mapRef.current.on('click', handler);
         }
     };
 
-    // Step 3: Convert to 3D
     const convertTo3D = () => {
-        if (!waterSource || polygonRef.current.length < 3) return;
+        if (waterSources.length === 0 || polygonRef.current.length < 3) return;
         const closed = [...polygonRef.current, polygonRef.current[0]];
-        onAOISelected(closed, waterSource);
+        onAOISelected(closed, waterSources);
     };
 
     const clearAll = () => {
-        setPolygon([]); setWaterSource(null); setStep('idle');
+        setPolygon([]); setWaterSources([]); setStep('idle');
         polygonRef.current = [];
         clearLayers();
         removeAllHandlers();
@@ -203,127 +319,95 @@ export default function AOISelector({ onAOISelected }: AOISelectorProps) {
         <div style={{ width: '100%', height: '100%', position: 'relative', background: '#0f172a' }}>
             <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
 
-            {/* Search Bar */}
-            <div style={{
-                position: 'absolute', top: '1rem', left: '50%', transform: 'translateX(-50%)',
-                zIndex: 1000, display: 'flex', gap: '0.5rem', width: '420px', maxWidth: '90vw'
-            }}>
-                <input type="text" value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && searchLocation()}
-                    placeholder="Search location... (Mumbai, Tokyo, etc.)"
-                    style={{
-                        flex: 1, padding: '0.75rem 1rem', borderRadius: '8px',
-                        background: 'rgba(15, 23, 42, 0.92)', backdropFilter: 'blur(12px)',
-                        border: '1px solid rgba(255,255,255,0.15)', color: '#f8fafc',
-                        fontSize: '0.85rem', outline: 'none'
-                    }}
-                />
-                <button onClick={searchLocation} style={{
-                    padding: '0.75rem', borderRadius: '8px',
-                    background: 'rgba(56,189,248,0.2)', border: '1px solid rgba(56,189,248,0.4)',
-                    color: '#38bdf8', cursor: 'pointer', display: 'flex', alignItems: 'center'
-                }}>
-                    <Search size={18} />
-                </button>
+            {/* Autocomplete Search Bar */}
+            <div className="search-container" ref={searchContainerRef}>
+                <div style={{ display: 'flex', flex: 1 }}>
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => handleSearchInput(e.target.value)}
+                        onKeyDown={handleSearchKeyDown}
+                        onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                        placeholder="Search any location..."
+                        className="search-input"
+                        autoComplete="off"
+                    />
+                    <button onClick={() => { if (suggestions.length > 0) selectSuggestion(suggestions[0]); }} className="search-btn">
+                        {searchLoading
+                            ? <div className="search-spinner" />
+                            : <Search size={18} />
+                        }
+                    </button>
+                </div>
+                {showSuggestions && suggestions.length > 0 && (
+                    <div className="search-suggestions">
+                        {suggestions.map((s, i) => {
+                            const { main, secondary } = formatSuggestion(s);
+                            return (
+                                <div
+                                    key={s.place_id}
+                                    className={`search-suggestion-item ${i === activeSuggIdx ? 'active' : ''}`}
+                                    onClick={() => selectSuggestion(s)}
+                                    onMouseEnter={() => setActiveSuggIdx(i)}
+                                >
+                                    <span className="suggestion-icon">{getSuggestionIcon(s)}</span>
+                                    <div className="suggestion-text">
+                                        <span className="suggestion-main">{main}</span>
+                                        {secondary && <span className="suggestion-secondary">{secondary}</span>}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
-            {/* Controls */}
-            <div style={{
-                position: 'absolute', top: '4.5rem', right: '1rem',
-                zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '0.5rem'
-            }}>
+            {/* Floating Action Controls */}
+            <div className="aoi-controls">
                 {step === 'idle' && (
-                    <button onClick={startDrawing} className="btn btn-success-soft"
-                        style={{ padding: '0.75rem 1.5rem', width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <button onClick={startDrawing} className="fab fab-success">
                         <Pentagon size={18} />
-                        Step 1: Draw AOI
+                        Draw Area of Interest
                     </button>
                 )}
                 {step === 'drawing-polygon' && (
                     <>
-                        <button onClick={finishPolygon} disabled={polygon.length < 3}
-                            className="btn btn-success-soft"
-                            style={{
-                                padding: '0.75rem 1.5rem', width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                opacity: polygon.length < 3 ? 0.5 : 1, cursor: polygon.length < 3 ? 'not-allowed' : 'pointer'
-                            }}>
+                        <button onClick={finishPolygon} disabled={polygon.length < 3} className="fab fab-success">
                             <ArrowRight size={18} />
                             Done ({polygon.length} pts)
                         </button>
-                        <button onClick={clearAll} className="btn btn-danger-soft"
-                            style={{ padding: '0.75rem 1.5rem', width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <button onClick={clearAll} className="fab fab-danger">
                             <Trash2 size={18} /> Clear
                         </button>
                     </>
                 )}
                 {step === 'placing-source' && (
-                    <div style={{
-                        padding: '1rem', borderRadius: '8px', background: 'rgba(15,23,42,0.95)',
-                        border: '1px solid rgba(59,130,246,0.5)', color: '#93c5fd', maxWidth: '220px'
-                    }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 700, fontSize: '0.85rem' }}>
-                            <Waves size={16} /> Step 2
+                    <div className="source-hint">
+                        <div className="source-hint-title">
+                            <Waves size={16} /> Mark Water Sources
                         </div>
-                        <p style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
-                            Click on a <b style={{ color: '#60a5fa' }}>river, lake, or water body</b> inside your AOI to mark the flood origin.
+                        <p style={{ fontSize: '0.75rem', lineHeight: 1.5, marginBottom: '0.5rem' }}>
+                            Click on <b>rivers, lakes, or seas</b> to add flood origins ({waterSources.length} added).
                         </p>
+                        {waterSources.length > 0 && (
+                            <button onClick={convertTo3D} className="fab fab-primary" style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}>
+                                <ArrowRight size={16} />
+                                Start Simulation
+                            </button>
+                        )}
+                        <button onClick={clearAll} className="fab fab-danger" style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}>
+                            <Trash2 size={16} /> Reset
+                        </button>
                     </div>
                 )}
                 {step === 'ready' && (
                     <>
-                        <button onClick={convertTo3D} className="btn btn-success-soft"
-                            style={{ padding: '0.75rem 1.5rem', width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <ArrowRight size={18} />
-                            Convert to 3D Mesh
-                        </button>
-                        <button onClick={clearAll} className="btn btn-danger-soft"
-                            style={{ padding: '0.75rem 1.5rem', width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <Trash2 size={18} /> Start Over
-                        </button>
+                        {/* 'ready' step effectively merged into placing-source for multi-select */}
                     </>
                 )}
             </div>
 
-            {/* Bottom instructions */}
-            <div style={{
-                position: 'absolute', bottom: '2rem', left: '50%', transform: 'translateX(-50%)',
-                zIndex: 1000, background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(12px)',
-                padding: '1.25rem 2.5rem', borderRadius: '12px',
-                border: '1px solid rgba(56,189,248,0.2)', color: '#f8fafc', textAlign: 'center',
-            }}>
-                {step === 'idle' && (
-                    <>
-                        <h2 style={{
-                            fontSize: '1.2rem', fontWeight: 700, marginBottom: '0.5rem',
-                            background: 'linear-gradient(to right, #38bdf8, #818cf8)',
-                            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
-                        }}>
-                            FloodRisk AI — Area Selection
-                        </h2>
-                        <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
-                            Search a location → Draw your AOI → Place the water source → Convert to 3D
-                        </p>
-                    </>
-                )}
-                {step === 'drawing-polygon' && (
-                    <p style={{ color: '#38bdf8', fontSize: '0.85rem' }}>
-                        <MapPin size={16} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
-                        Click on the map to draw your Area of Interest (min 3 points)
-                    </p>
-                )}
-                {step === 'placing-source' && (
-                    <p style={{ color: '#60a5fa', fontSize: '0.85rem' }}>
-                        <Waves size={16} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
-                        Now click on a water body (river/lake) to mark where the flood originates
-                    </p>
-                )}
-                {step === 'ready' && (
-                    <p style={{ color: '#34d399', fontSize: '0.85rem' }}>
-                        ✅ AOI and water source set! Click <b>Convert to 3D Mesh</b> to enter simulation.
-                    </p>
-                )}
-            </div>
+
         </div>
     );
 }

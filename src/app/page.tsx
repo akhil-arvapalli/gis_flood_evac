@@ -1,4 +1,4 @@
- 'use client';
+'use client';
 
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
@@ -7,19 +7,23 @@ import { fetchGeoData, type GeoData } from '@/lib/geodata';
 
 const AOISelector = dynamic(() => import('@/components/AOISelector'), {
   ssr: false,
-  loading: () => <LoadingScreen message="Loading 2D Map..." />
+  loading: () => <LoadingScreen message="Loading 2D Map..." />,
 });
 
 const FloodTerrain3D = dynamic(() => import('@/components/FloodTerrain3D'), {
   ssr: false,
-  loading: () => <LoadingScreen message="Initializing 3D Engine..." />
+  loading: () => <LoadingScreen message="Initializing 3D Engine..." />,
 });
 
 function LoadingScreen({ message }: { message: string }) {
   return (
-    <div className="loading-container">
-      <div className="spinner" />
-      <span className="loading-text">{message}</span>
+    <div className="loading-screen">
+      <div className="loading-icon">🌊</div>
+      <div className="loading-title">FloodRisk AI</div>
+      <div className="loading-subtitle">{message}</div>
+      <div className="loading-bar">
+        <div className="loading-bar-fill" />
+      </div>
     </div>
   );
 }
@@ -29,14 +33,16 @@ type AppMode = 'aoi-selection' | 'loading-data' | '3d-simulation';
 export default function Home() {
   const [mode, setMode] = useState<AppMode>('aoi-selection');
   const [aoiCoordinates, setAOICoordinates] = useState<number[][] | null>(null);
-  const [waterSource, setWaterSource] = useState<number[] | null>(null);
+  const [waterSources, setWaterSources] = useState<number[][]>([]);
   const [floodLevel, setFloodLevel] = useState(0);
   const [isSimulating, setIsSimulating] = useState(false);
   const [showMesh, setShowMesh] = useState(true);
   const [showEvacRoutes, setShowEvacRoutes] = useState(false);
   const [showBuildings, setShowBuildings] = useState(true);
   const [geoData, setGeoData] = useState<GeoData | null>(null);
-  const [viewMode, setViewMode] = useState<'perspective' | 'oblique' | 'top'>('perspective');
+  const [viewMode, setViewMode] = useState<'perspective' | 'oblique' | 'top' | 'free'>('perspective');
+  const [interactionMode, setInteractionMode] = useState<'view' | 'block'>('view');
+  const [blockedAreas, setBlockedAreas] = useState<{ x: number, z: number, r: number }[]>([]);
 
   // Smooth flood animation
   useEffect(() => {
@@ -55,9 +61,9 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [isSimulating, mode]);
 
-  const handleAOISelected = async (coordinates: number[][], source: number[]) => {
+  const handleAOISelected = async (coordinates: number[][], sources: number[][]) => {
     setAOICoordinates(coordinates);
-    setWaterSource(source);
+    setWaterSources(sources);
     setFloodLevel(0);
     setIsSimulating(false);
     setShowMesh(true);
@@ -74,7 +80,7 @@ export default function Home() {
   const handleBackToAOI = () => {
     setMode('aoi-selection');
     setAOICoordinates(null);
-    setWaterSource(null);
+    setWaterSources([]);
     setFloodLevel(0);
     setIsSimulating(false);
   };
@@ -95,19 +101,22 @@ export default function Home() {
           <FloodTerrain3D
             floodLevel={floodLevel}
             aoiCoordinates={aoiCoordinates}
-            waterSource={waterSource}
+            waterSources={waterSources}
             showMesh={showMesh}
             showEvacRoutes={showEvacRoutes}
             showBuildings={showBuildings}
             geoData={geoData}
             viewMode={viewMode}
+            interactionMode={interactionMode}
+            blockedAreas={blockedAreas}
+            setBlockedAreas={setBlockedAreas}
           />
         )}
       </div>
 
       {mode === '3d-simulation' && (
         <div className="ui-layer">
-          <div style={{ pointerEvents: 'auto', height: '100%' }}>
+          <div style={{ pointerEvents: 'none', height: '100%' }}>
             <Sidebar
               floodLevel={floodLevel}
               setFloodLevel={setFloodLevel}
@@ -123,6 +132,8 @@ export default function Home() {
               toggleBuildings={() => setShowBuildings(!showBuildings)}
               viewMode={viewMode}
               setViewMode={setViewMode}
+              interactionMode={interactionMode}
+              setInteractionDetails={setInteractionMode}
             />
           </div>
 
